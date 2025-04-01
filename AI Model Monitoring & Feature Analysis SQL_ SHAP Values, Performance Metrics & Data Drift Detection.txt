@@ -1,0 +1,76 @@
+WITH 
+-- Feature importance from SHAP values
+feature_importance AS (
+    SELECT 
+        feature_name,
+        AVG(ABS(shap_value)) AS avg_absolute_impact,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ABS(shap_value)) AS median_impact,
+        COUNT(DISTINCT model_version) AS num_models_used_in
+    FROM model_explanations
+    WHERE explanation_type = 'SHAP'
+    GROUP BY feature_name
+),
+
+-- Model performance metrics
+model_performance AS (
+    SELECT
+        model_version,
+        AVG(CASE WHEN metric_name = 'accuracy' THEN metric_value END) AS accuracy,
+        AVG(CASE WHEN metric_name = 'precision' THEN metric_value END) AS precision,
+        AVG(CASE WHEN metric_name = 'recall' THEN metric_value END) AS recall,
+        AVG(CASE WHEN metric_name = 'f1_score' THEN metric_value END) AS f1_score,
+        AVG(CASE WHEN metric_name = 'inference_latency_ms' THEN metric_value END) AS latency_ms,
+        COUNT(DISTINCT feature_set) AS num_feature_sets_tested
+    FROM model_metrics
+    WHERE evaluation_time > CURRENT_DATE - INTERVAL '90 days'
+    GROUP BY model_version
+),
+
+-- Data drift detection
+data_drift AS (
+    SELECT
+        feature_name,
+        AVG(CASE WHEN dataset_type = 'training' THEN feature_value END) AS training_mean,
+        AVG(CASE WHEN dataset_type = 'production' THEN feature_value END) AS production_mean,
+        ABS(AVG(CASE WHEN dataset_type = 'training' THEN feature_value END) - 
+            AVG(CASE WHEN dataset_type = 'production' THEN feature_value END)) / 
+            NULLIF(AVG(CASE WHEN dataset_type = 'training' THEN feature_value END), 0) AS pct_drift
+    FROM feature_distributions
+    WHERE snapshot_date = CURRENT_DATE - 1
+    GROUP BY feature_name
+    HAVING COUNT(DISTINCT dataset_type) = 2
+)
+
+-- Final analysis combining all metrics
+SELECT
+    fi.feature_name,
+    fi.avg_absolute_impact,
+    fi.median_impact,
+    fi.num_models_used_in,
+    dd.training_mean,
+    dd.production_mean,
+    dd.pct_drift,
+    -- Find the best performing model using this feature
+    (SELECT model_version 
+     FROM model_performance mp
+     JOIN model_features mf ON mp.model_version = mf.model_version
+     WHERE mf.feature_name = fi.feature_name
+     ORDER BY mp.f1_score DESC, mp.latency_ms ASC
+     LIMIT 1) AS best_model_version,
+    -- Calculate drift risk score
+    CASE 
+        WHEN fi.avg_absolute_impact > 0.1 AND dd.pct_drift > 0.2 THEN 'HIGH RISK'
+        WHEN fi.avg_absolute_impact > 0.05 AND dd.pct_drift > 0.1 THEN 'MEDIUM RISK'
+        WHEN dd.pct_drift > 0.3 THEN 'INVESTIGATE'
+        ELSE 'LOW RISK'
+    END AS drift_risk
+FROM feature_importance fi
+LEFT JOIN data_drift dd ON fi.feature_name = dd.feature_name
+WHERE fi.avg_absolute_impact > 0.01  -- Filter out negligible features
+ORDER BY 
+    CASE 
+        WHEN fi.avg_absolute_impact > 0.1 AND dd.pct_drift > 0.2 THEN 0
+        WHEN fi.avg_absolute_impact > 0.05 AND dd.pct_drift > 0.1 THEN 1
+        ELSE 2
+    END,
+    fi.avg_absolute_impact DESC;

@@ -1,0 +1,15 @@
+WITH user_similarity AS (
+    SELECT 
+        a.user_id AS user1, 
+        b.user_id AS user2,
+        SUM(a.rating * b.rating) / (SQRT(SUM(a.rating * a.rating)) * SQRT(SUM(b.rating * b.rating))) AS similarity_score
+    FROM ratings a
+    JOIN ratings b 
+        ON a.product_id = b.product_id AND a.user_id <> b.user_id
+    GROUP BY user1, user2
+)
+SELECT user1, user2, similarity_score
+FROM user_similarity
+WHERE similarity_score > 0.5 -- Find similar users with a score > 0.5
+ORDER BY similarity_score DESC
+LIMIT 10;
