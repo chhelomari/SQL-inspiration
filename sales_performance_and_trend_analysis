@@ -1,0 +1,87 @@
+WITH sales_summary AS (
+    -- Step 1: Aggregate sales data by month and product
+    SELECT
+        product_id,
+        EXTRACT(YEAR FROM order_date) AS year,
+        EXTRACT(MONTH FROM order_date) AS month,
+        SUM(sales_amount) AS total_sales,
+        COUNT(DISTINCT order_id) AS num_orders
+    FROM
+        sales_data
+    GROUP BY
+        product_id, EXTRACT(YEAR FROM order_date), EXTRACT(MONTH FROM order_date)
+),
+stats AS (
+    -- Step 2: Calculate the mean and standard deviation for the sales data
+    SELECT
+        AVG(total_sales) AS mean_sales,
+        STDDEV(total_sales) AS stddev_sales
+    FROM
+        sales_summary
+),
+outliers AS (
+    -- Step 3: Detect outliers based on Z-score (values beyond 3 standard deviations)
+    SELECT
+        s.product_id,
+        s.year,
+        s.month,
+        s.total_sales,
+        (s.total_sales - st.mean_sales) / st.stddev_sales AS z_score
+    FROM
+        sales_summary s, stats st
+    WHERE
+        ABS((s.total_sales - st.mean_sales) / st.stddev_sales) > 3  -- Outlier condition
+),
+moving_avg AS (
+    -- Step 4: Calculate 3-month moving average of total sales per product
+    SELECT
+        product_id,
+        year,
+        month,
+        total_sales,
+        AVG(total_sales) OVER (PARTITION BY product_id ORDER BY year, month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_sales
+    FROM
+        sales_summary
+),
+product_rank AS (
+    -- Step 5: Rank products by total sales in the latest month (just for demonstration)
+    SELECT
+        product_id,
+        year,
+        month,
+        total_sales,
+        RANK() OVER (PARTITION BY year, month ORDER BY total_sales DESC) AS product_rank
+    FROM
+        sales_summary
+),
+final_summary AS (
+    -- Step 6: Combine all results
+    SELECT
+        ss.product_id,
+        ss.year,
+        ss.month,
+        ss.total_sales,
+        ss.num_orders,
+        ma.moving_avg_sales,
+        pr.product_rank,
+        o.z_score
+    FROM
+        sales_summary ss
+    LEFT JOIN moving_avg ma ON ss.product_id = ma.product_id AND ss.year = ma.year AND ss.month = ma.month
+    LEFT JOIN product_rank pr ON ss.product_id = pr.product_id AND ss.year = pr.year AND ss.month = pr.month
+    LEFT JOIN outliers o ON ss.product_id = o.product_id AND ss.year = o.year AND ss.month = o.month
+)
+-- Final step: Return the results
+SELECT
+    product_id,
+    year,
+    month,
+    total_sales,
+    num_orders,
+    moving_avg_sales,
+    product_rank,
+    z_score
+FROM
+    final_summary
+ORDER BY
+    year DESC, month DESC, total_sales DESC;
