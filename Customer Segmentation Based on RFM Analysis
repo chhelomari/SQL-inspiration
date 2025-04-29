@@ -1,0 +1,53 @@
+WITH rfm_data AS (
+    -- Step 1: Calculate Recency, Frequency, and Monetary values
+    SELECT
+        customer_id,
+        MAX(order_date) AS last_order_date,  -- Recency: Most recent order date
+        COUNT(order_id) AS frequency,        -- Frequency: Total number of orders
+        SUM(sales_amount) AS monetary        -- Monetary: Total sales spent
+    FROM
+        sales_data
+    GROUP BY
+        customer_id
+),
+today AS (
+    -- Step 2: Get today's date for calculating recency (could be replaced with a specific date)
+    SELECT CURRENT_DATE AS current_date
+),
+rfm_scores AS (
+    -- Step 3: Calculate RFM scores (scale between 1 to 5)
+    SELECT
+        r.customer_id,
+        DATEDIFF((SELECT current_date FROM today), r.last_order_date) AS recency,
+        r.frequency,
+        r.monetary,
+        NTILE(5) OVER (ORDER BY DATEDIFF((SELECT current_date FROM today), r.last_order_date)) AS recency_score,   -- Recency score (1 to 5)
+        NTILE(5) OVER (ORDER BY r.frequency DESC) AS frequency_score,                                                 -- Frequency score (1 to 5)
+        NTILE(5) OVER (ORDER BY r.monetary DESC) AS monetary_score                                                  -- Monetary score (1 to 5)
+    FROM
+        rfm_data r
+),
+customer_segments AS (
+    -- Step 4: Segment customers based on RFM scores
+    SELECT
+        customer_id,
+        recency_score + frequency_score + monetary_score AS rfm_score,  -- Summing the scores for overall RFM score
+        CASE
+            WHEN (recency_score + frequency_score + monetary_score) >= 13 THEN 'High Value'   -- High value customers
+            WHEN (recency_score + frequency_score + monetary_score) BETWEEN 9 AND 12 THEN 'Loyal but Low Spenders'   -- Loyal but low spenders
+            ELSE 'One-time Shoppers'   -- One-time shoppers
+        END AS customer_segment
+    FROM
+        rfm_scores
+)
+-- Final step: Retrieve the customer segments
+SELECT
+    customer_id,
+    customer_segment,
+    recency_score,
+    frequency_score,
+    monetary_score
+FROM
+    customer_segments
+ORDER BY
+    rfm_score DESC, customer_segment;
