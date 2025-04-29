@@ -1,0 +1,51 @@
+WITH performance_data AS (
+    -- Step 1: Calculate total attendance and average performance rating per employee
+    SELECT
+        employee_id,
+        COUNT(DISTINCT attendance_date) AS total_attendance,      -- Total days attended
+        AVG(performance_rating) AS avg_performance_rating          -- Average performance rating
+    FROM
+        employee_data
+    GROUP BY
+        employee_id
+),
+project_data AS (
+    -- Step 2: Calculate total projects completed and average completion time per employee
+    SELECT
+        employee_id,
+        COUNT(DISTINCT project_id) AS total_projects_completed,   -- Total number of projects
+        AVG(completion_time) AS avg_completion_time                -- Average time taken per project
+    FROM
+        project_data
+    GROUP BY
+        employee_id
+),
+employee_summary AS (
+    -- Step 3: Combine performance data and project data
+    SELECT
+        p.employee_id,
+        p.total_attendance,
+        p.avg_performance_rating,
+        pr.total_projects_completed,
+        pr.avg_completion_time
+    FROM
+        performance_data p
+    JOIN
+        project_data pr ON p.employee_id = pr.employee_id
+)
+-- Final Step: Classify employees based on performance and efficiency
+SELECT
+    employee_id,
+    total_attendance,
+    avg_performance_rating,
+    total_projects_completed,
+    avg_completion_time,
+    CASE
+        WHEN avg_performance_rating >= 4 AND total_projects_completed >= 5 THEN 'Top Performer'  -- High ratings & many projects
+        WHEN avg_performance_rating BETWEEN 3 AND 3.9 THEN 'Average Performer'                   -- Average ratings
+        ELSE 'Needs Improvement'                                                                -- Low ratings
+    END AS performance_category
+FROM
+    employee_summary
+ORDER BY
+    performance_category DESC, avg_performance_rating DESC;
